@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Horse Racing Game</title>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        .game-container { width: 100%; max-width: 800px; margin: 0 auto; }
+        .section { padding: 20px; }
+        .horses-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        .horses-table td, .horses-table th { border: 1px solid black; padding: 8px; text-align: center; }
+        .dots { font-size: 1.5rem; }
+        .top-bar {
+            background-color: #f1f1f1;
+            display: flex;
+            justify-content: space-around;
+            padding: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        /* Additional styling for mobile responsiveness */
+        @media (max-width: 600px) {
+            .horses-table td, .horses-table th { font-size: 0.8rem; }
+            .dots { font-size: 1rem; }
+        }
+        .hidden { display: none; }
+        .player-input { margin-bottom: 10px; }
+        .winner-inputs { margin-top: 10px; }
+        .winner-inputs .player-input { display: flex; align-items: center; margin-bottom: 5px; }
+        .winner-inputs label { margin-right: 5px; }
+        .control-panel { margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="game-container" id="game-container">
+        <!-- Game Dialogue Section -->
+        <div class="section" id="game-dialogue">
+            <!-- Dynamic content will be inserted here -->
+        </div>
+
+        <!-- Current Pot Display -->
+        <div class="top-bar hidden" id="pot-display">
+            <div id="current-pot">Current Pot: $0.00</div>
+        </div>
+
+        <!-- Horse Positions Section -->
+        <div class="section hidden" id="horse-positions">
+            <h2>Horse Positions</h2>
+            <table class="horses-table">
+                <thead>
+                    <tr>
+                        <th>Horse</th>
+                        <th>Position</th>
+                        <th>Probability / Penalty</th>
+                    </tr>
+                </thead>
+                <tbody id="horse-table-body">
+                    <!-- Horse rows will be dynamically inserted here -->
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Player Stats Section -->
+        <div class="section hidden" id="player-stats">
+            <h2>Player Stats</h2>
+            <div id="cumulative-totals">
+                <!-- Round # Totals will be inserted here -->
+            </div>
+            <div id="overall-totals">
+                <h3>Overall Cumulative Totals</h3>
+                <!-- Player Net Winnings -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // JavaScript to manage game state and interactions with the UI
+
+        let players = [];
+        let currentTurn = 0;
+        let horses = {};
+        let pot = 0;
+        let wagerAmount = 1.0;
+        let roundsPlayed = 0;
+        let penaltiesAssigned = 0;
+        let scratchOrder = [1, 2, 3, 4];
+        let gameEnded = false;
+
+        function showGameSetup() {
+            const gameDialogue = document.getElementById("game-dialogue");
+            gameDialogue.innerHTML = `
+                <h2>Game Setup</h2>
+                <div>
+                    <label for="num-players">Number of Players (2-11):</label>
+                    <input type="number" id="num-players" min="2" max="11" />
+                </div>
+                <div id="player-names">
+                    <!-- Player name inputs will be added here -->
+                </div>
+                <div>
+                    <label for="wager-amount-input">Dollar Wager for Penalties:</label>
+                    <input type="number" id="wager-amount-input" step="0.01" min="0.01" />
+                </div>
+                <button onclick="startGame()">Start Game</button>
+            `;
+
+            document.getElementById("num-players").addEventListener("change", function() {
+                const numPlayers = parseInt(this.value);
+                const playerNamesDiv = document.getElementById("player-names");
+                playerNamesDiv.innerHTML = '';
+                for (let i = 0; i < numPlayers; i++) {
+                    playerNamesDiv.innerHTML += `
+                        <div class="player-input">
+                            <label for="player-name-${i}">Player ${i + 1} Name:</label>
+                            <input type="text" id="player-name-${i}" />
+                        </div>
+                    `;
+                }
+            });
+        }
+
+        // Initialize the game when the page loads
+        window.onload = showGameSetup;
+
+        const diceProbabilities = {
+            2: 1/36,
+            3: 2/36,
+            4: 3/36,
+            5: 4/36,
+            6: 5/36,
+            7: 6/36,
+            8: 5/36,
+            9: 4/36,
+            10: 3/36,
+            11: 2/36,
+            12: 1/36
+        };
+
+        function calculateFinishLine(number) {
+            switch (number) {
+                case 2: case 12: return 3;
+                case 3: case 11: return 6;
+                case 4: case 10: return 8;
+                case 5: case 9: return 11;
+                case 6: case 8: return 14;
+                case 7: return 17;
+                default: return 0;
+            }
+        }
+
+        function startGame() {
+            // Get number of players
+            let numPlayers = parseInt(document.getElementById("num-players").value);
+            if (isNaN(numPlayers) || numPlayers < 2 || numPlayers > 11) {
+                alert("Please enter a valid number of players (2-11).");
+                return;
+            }
+
+            // Get player names
+            players = [];
+            for (let i = 0; i < numPlayers; i++) {
+                const playerNameInput = document.getElementById(`player-name-${i}`);
+                let name = playerNameInput.value.trim();
+                if (!name) {
+                    alert(`Please enter a name for Player ${i + 1}.`);
+                    return;
+                }
+                players.push({
+                    name: name,
+                    penalties: 0,
+                    winnings: 0,
+                    roundPenalties: 0,
+                    roundWinnings: 0
+                });
+            }
+
+            // Get wager amount
+            let amount = parseFloat(document.getElementById("wager-amount-input").value);
+            if (isNaN(amount) || amount <= 0) {
+                alert("Please enter a valid wager amount.");
+                return;
+            }
+            wagerAmount = amount;
+
+            // Hide the setup section and start the scratch phase
+            startNewRound();
+        }
+
+        function startNewRound() {
+            roundsPlayed += 1;
+            gameEnded = false;
+            // Reset horses
+            horses = {};
+            for (let i = 2; i <= 12; i++) {
+                horses[i] = {
+                    number: i,
+                    position: 0,
+                    finishLine: calculateFinishLine(i),
+                    scratched: false,
+                    penalty: 0,
+                    probability: 0,
+                    prob_move: diceProbabilities[i]
+                };
+            }
+            // Reset pot
+            pot = 0;
+            players.forEach(player => {
+                player.roundPenalties = 0;
+                player.roundWinnings = 0;
+            });
+
+            // Start scratch phase
+            penaltiesAssigned = 0;
+            scratchOrder = [1, 2, 3, 4];
+            currentTurn = 0;
+
+            // Update wager amount input
+            document.getElementById("wager-amount-input").value = wagerAmount;
+
+            showScratchPhase();
+            updateUI();
+        }
+
+        function showScratchPhase() {
+            const gameDialogue = document.getElementById("game-dialogue");
+            gameDialogue.innerHTML = `
+                <h2>Scratch Phase</h2>
+                <div id="scratch-instructions">
+                    <p>Scratch Roll <span id="scratch-roll-number">1</span>:</p>
+                    <label for="scratch-dice-roll">Enter the number rolled (2-12):</label>
+                    <input type="number" id="scratch-dice-roll" min="2" max="12" />
+                    <button onclick="submitScratchRoll()">Submit Scratch Roll</button>
+                </div>
+            `;
+
+            document.getElementById("scratch-roll-number").innerText = penaltiesAssigned + 1;
+            document.getElementById("scratch-dice-roll").value = '';
+        }
+
+        function submitScratchRoll() {
+            let diceRoll = parseInt(document.getElementById("scratch-dice-roll").value);
+            if (isNaN(diceRoll) || diceRoll < 2 || diceRoll > 12) {
+                alert("Invalid dice roll. Enter a number between 2 and 12.");
+                return;
+            }
+            if (!horses[diceRoll].scratched) {
+                horses[diceRoll].scratched = true;
+                horses[diceRoll].penalty = scratchOrder[penaltiesAssigned];
+                penaltiesAssigned++;
+                if (penaltiesAssigned < 4) {
+                    document.getElementById("scratch-roll-number").innerText = penaltiesAssigned + 1;
+                    document.getElementById("scratch-dice-roll").value = '';
+                } else {
+                    // Scratch phase complete
+                    showGameDialogue();
+                    document.getElementById("horse-positions").classList.remove("hidden");
+                    document.getElementById("player-stats").classList.remove("hidden");
+                    document.getElementById("pot-display").classList.remove("hidden");
+                    computeProbabilities();
+                    updateUI();
+                }
+            } else {
+                alert(`Horse ${diceRoll} has already been scratched. Please enter a different dice roll.`);
+            }
+        }
+
+        function showGameDialogue() {
+            const gameDialogue = document.getElementById("game-dialogue");
+            gameDialogue.innerHTML = `
+                <h2>Game Dialogue</h2>
+                <div id="current-turn">Turn: Player's turn</div>
+                <div>
+                    <label for="dice-roll">Enter dice roll (2-12):</label>
+                    <input type="number" id="dice-roll" min="2" max="12" />
+                    <button id="submit-roll-button" onclick="submitDiceRoll()">Submit Roll</button>
+                </div>
+            `;
+        }
+
+        function submitDiceRoll() {
+            const roll = parseInt(document.getElementById("dice-roll").value);
+            if (isNaN(roll) || roll < 2 || roll > 12) {
+                alert("Invalid dice roll. Enter a number between 2 and 12.");
+                return;
+            }
+
+            const player = players[currentTurn];
+
+            if (horses[roll].scratched) {
+                const penaltyAmount = horses[roll].penalty * wagerAmount;
+                player.penalties += penaltyAmount;
+                player.roundPenalties += penaltyAmount;
+                pot += penaltyAmount;
+            } else {
+                horses[roll].position += 1;
+                if (horses[roll].position >= horses[roll].finishLine) {
+                    computeProbabilities(true, roll); // Set probabilities when game ends
+                    updateUI(); // Update UI to show the last dot and updated probabilities
+                    endGame(roll);
+                    return;
+                }
+            }
+
+            currentTurn = (currentTurn + 1) % players.length;
+            computeProbabilities();
+            updateUI();
+            // Clear dice roll input for the next player
+            document.getElementById("dice-roll").value = '';
+        }
+
+        function computeProbabilities(gameEnded = false, winningHorseNumber = null) {
+            if (gameEnded) {
+                for (const number in horses) {
+                    const horse = horses[number];
+                    if (parseInt(number) === winningHorseNumber) {
+                        horse.probability = 100;
+                    } else {
+                        horse.probability = 0;
+                    }
+                }
+                return;
+            }
+
+            let totalWeight = 0;
+            const weights = {};
+
+            for (const number in horses) {
+                const horse = horses[number];
+                let weight = 0;
+                if (!horse.scratched && horse.position < horse.finishLine) {
+                    const remainingSteps = horse.finishLine - horse.position;
+                    weight = horse.prob_move / remainingSteps;
+                }
+                weights[number] = weight;
+                totalWeight += weight;
+            }
+
+            for (const number in horses) {
+                const horse = horses[number];
+                if (totalWeight > 0) {
+                    horse.probability = (weights[number] / totalWeight) * 100;
+                } else {
+                    horse.probability = 0;
+                }
+            }
+        }
+
+        function updateUI() {
+            // Update current turn
+            if (players.length > 0 && document.getElementById("current-turn")) {
+                const player = players[currentTurn];
+                document.getElementById("current-turn").innerText = `Turn: ${player.name}'s turn`;
+            }
+
+            // Update horse positions
+            const horseTableBody = document.getElementById("horse-table-body");
+            horseTableBody.innerHTML = ''; // Clear existing table rows
+
+            for (const number in horses) {
+                const horse = horses[number];
+                const filledDots = '●'.repeat(horse.position);
+                const emptyDots = '○'.repeat(horse.finishLine - horse.position);
+                const dots = filledDots + emptyDots;
+
+                let probOrPenalty = '';
+                if (horse.scratched) {
+                    probOrPenalty = 'Penalty: ' + horse.penalty;
+                } else {
+                    probOrPenalty = horse.probability.toFixed(1) + '%';
+                }
+
+                const row = `
+                    <tr>
+                        <td>Horse ${number}</td>
+                        <td class="dots">${dots}</td>
+                        <td>${probOrPenalty}</td>
+                    </tr>
+                `;
+                horseTableBody.innerHTML += row;
+            }
+
+            // Update pot
+            document.getElementById("current-pot").innerText = `Current Pot: $${pot.toFixed(2)}`;
+
+            // Update player stats
+            updatePlayerStats();
+        }
+
+        function updatePlayerStats() {
+            const cumulativeTotalsDiv = document.getElementById("cumulative-totals");
+            const overallTotalsDiv = document.getElementById("overall-totals");
+
+            cumulativeTotalsDiv.innerHTML = `<h3>Round ${roundsPlayed} Totals</h3>`;
+
+            players.forEach(player => {
+                const roundNet = player.roundWinnings - player.roundPenalties;
+                const roundNetFormatted = roundNet >= 0 ? `$${roundNet.toFixed(2)}` : `-$${Math.abs(roundNet).toFixed(2)}`;
+                cumulativeTotalsDiv.innerHTML += `<p>${player.name}: Net = ${roundNetFormatted}</p>`;
+            });
+
+            // Update overall totals only if the game has ended and winnings have been distributed
+            if (gameEnded) {
+                overallTotalsDiv.innerHTML = '<h3>Overall Cumulative Totals</h3>';
+                players.forEach(player => {
+                    const netWinnings = player.winnings - player.penalties;
+                    const netWinningsFormatted = netWinnings >= 0 ? `$${netWinnings.toFixed(2)}` : `-$${Math.abs(netWinnings).toFixed(2)}`;
+                    overallTotalsDiv.innerHTML += `<p>${player.name}: Net = ${netWinningsFormatted}</p>`;
+                });
+            }
+        }
+
+        function endGame(winningHorseNumber) {
+            gameEnded = true;
+            // Disable dice roll input and button
+            document.getElementById("dice-roll").disabled = true;
+            document.getElementById("submit-roll-button").disabled = true;
+
+            // Collect winner information
+            const gameDialogue = document.getElementById("game-dialogue");
+            gameDialogue.innerHTML = `
+                <h3>Horse ${winningHorseNumber} has won the race!</h3>
+                <p>The total pot is $${pot.toFixed(2)}.</p>
+                <h3>Enter Winner Information</h3>
+                <div id="winner-inputs" class="winner-inputs">
+                    <!-- Winner inputs will be added here -->
+                </div>
+                <button onclick="distributeWinnings()">Distribute Winnings</button>
+            `;
+
+            const winnerInputsDiv = document.getElementById('winner-inputs');
+
+            function addWinnerInput() {
+                const winnerInput = document.createElement('div');
+                winnerInput.classList.add('player-input');
+                winnerInput.innerHTML = `
+                    <label>Winner's Name:</label>
+                    <input type="text" class="winner-name" />
+                    <label>Cards:</label>
+                    <input type="number" class="winner-cards" min="1" max="4" />
+                `;
+
+                winnerInputsDiv.appendChild(winnerInput);
+            }
+
+            // Initially add one winner input
+            addWinnerInput();
+
+            // Allow adding more winner inputs
+            const addWinnerButton = document.createElement('button');
+            addWinnerButton.textContent = 'Add Another Winner';
+            addWinnerButton.onclick = addWinnerInput;
+            gameDialogue.appendChild(addWinnerButton);
+
+            // Add controls for starting next round and adjusting wager amount
+            const controlPanel = document.createElement('div');
+            controlPanel.classList.add('control-panel');
+            controlPanel.innerHTML = `
+                <label for="wager-amount-input">Dollar Wager for Next Round:</label>
+                <input type="number" id="wager-amount-input" step="0.01" min="0.01" value="${wagerAmount}" />
+                <button onclick="startNewRound()">Start Next Round</button>
+            `;
+            gameDialogue.appendChild(controlPanel);
+
+            updateUI(); // Ensure UI is updated to show the winning horse's last dot and probabilities
+        }
+
+        function distributeWinnings() {
+            const winnerInputsDiv = document.getElementById('winner-inputs');
+            const winnerNames = winnerInputsDiv.querySelectorAll('.winner-name');
+            const winnerCards = winnerInputsDiv.querySelectorAll('.winner-cards');
+            const winners = [];
+            let totalCardsAssigned = 0;
+
+            for (let i = 0; i < winnerNames.length; i++) {
+                const name = winnerNames[i].value.trim().toLowerCase();
+                const numCards = parseInt(winnerCards[i].value);
+                if (!name || isNaN(numCards) || numCards <= 0) {
+                    alert("Please enter valid winner names and number of cards.");
+                    return;
+                }
+                const player = players.find(p => p.name.trim().toLowerCase() === name);
+                if (!player) {
+                    alert(`Player ${name} not found. Please enter a valid player name.`);
+                    return;
+                }
+                winners.push({ player: player, numCards: numCards });
+                totalCardsAssigned += numCards;
+            }
+
+            if (totalCardsAssigned !== 4) {
+                alert("The total number of cards assigned must be exactly 4.");
+                return;
+            }
+
+            // Distribute winnings
+            winners.forEach(winner => {
+                const share = winner.numCards / 4; // Since there are always 4 cards
+                const winnings = pot * share;
+                winner.player.winnings += winnings;
+                winner.player.roundWinnings += winnings;
+            });
+
+            // Update overall cumulative totals after distributing winnings
+            updatePlayerStats();
+
+            // Disable the distribute winnings button
+            event.target.disabled = true;
+        }
+    </script>
+</body>
+</html>
